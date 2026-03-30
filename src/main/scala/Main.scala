@@ -1,47 +1,57 @@
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.scaladsl.AskPattern._
+import akka.util.Timeout
+import scala.concurrent.Await
+import scala.concurrent.duration._
 
 object Main {
   def main(args: Array[String]): Unit = {
-    println("=== system activated ===\n")
+    println("="*60)
+    println("ORDER MANAGEMENT SYSTEM - Console Edition")
+    println("="*60)
+    println("[INFO] Initializing actor system...\n")
 
     val rootBehavior = Behaviors.empty[String]
     val system: ActorSystem[String] = ActorSystem(rootBehavior, "OrderManagementSystem")
 
+    var orderActor: akka.actor.typed.ActorRef[Command] = null
+    var inventoryActor: akka.actor.typed.ActorRef[Command] = null
+    var paymentActor: akka.actor.typed.ActorRef[Command] = null
+
     try {
-      println("[INFO] initiating Actors...")
-      val inventoryActor = system.systemActorOf(InventoryActor(), "InventoryActor")
-      val paymentActor = system.systemActorOf(PaymentActor(), "PaymentActor")
-      val orderActor = system.systemActorOf(
-        OrderActor(inventoryActor, paymentActor),
-        "OrderActor"
-      )
-      val httpActor = system.systemActorOf(HttpRequestActor(), "HttpRequestActor")
+      println("[INFO] Creating actors...")
+      inventoryActor = system.systemActorOf(InventoryActor(), "InventoryActor")
+      paymentActor = system.systemActorOf(PaymentActor(), "PaymentActor")
+      orderActor = system.systemActorOf(OrderActor(inventoryActor, paymentActor), "OrderActor")
 
-      println("[SUCCESS] all Actors created\n")
+      println("[SUCCESS] All actors initialized\n")
 
-      println("[TEST] sending order...")
-      println("-------------------------------------------")
+      ConsoleUI.startConsole(orderActor, inventoryActor, paymentActor, system)
 
-      orderActor ! PlaceOrder("product-1", 2)
-      orderActor ! PlaceOrder("product-2", 1)
-      orderActor ! PlaceOrder("product-3", 5)
+      println("\n[INFO] Console UI exited. Preparing to shutdown...")
+      println("[INFO] Scanning for unpaid orders to release inventory...")
 
-      println("-------------------------------------------\n")
+      implicit val timeout: Timeout = 5.seconds
+      implicit val scheduler = system.scheduler
 
-      Thread.sleep(3000)
+      val shutdownFuture = orderActor.ask(ref => CancelAllUnpaidOrders(ref))
+      Await.result(shutdownFuture, 5.seconds)
 
-      println("[INFO] system processed orders, check logs for details\n")
-      println("=== review order.txt and payment.txt for detailed log ===\n")
+      println("[SUCCESS] All unpaid orders cancelled and inventory released.")
 
     } catch {
       case e: Exception =>
-        println(s"[ERROR] system failed to activate: ${e.getMessage}")
-        e.printStackTrace()
+        println(s"[ERROR] System error: ${e.getMessage}")
     } finally {
-      system.terminate()
-      println("[INFO] system shutdown")
+      println("\n[INFO] Shutting down actor system...")
+      try {
+        system.terminate()
+        Await.result(system.whenTerminated, 10.seconds)
+      } catch {
+        case e: Exception => println(s"[WARNING] Error during shutdown: ${e.getMessage}")
+      }
+      println("[INFO] System shutdown complete. Goodbye!")
     }
   }
 }
-
