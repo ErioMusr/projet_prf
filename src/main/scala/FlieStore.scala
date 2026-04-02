@@ -1,5 +1,4 @@
-
-import java.nio.file.{Files, Paths}
+import java.nio.file.{Files, Paths, StandardOpenOption}
 import java.nio.charset.StandardCharsets
 import scala.collection.JavaConverters._
 
@@ -7,6 +6,13 @@ object FileStore {
   val inventoryPath = Paths.get("inventory.txt")
   val orderPath = Paths.get("order.txt")
   val paymentPath = Paths.get("payment.txt")
+  val logPath = Paths.get("log.txt")
+
+  // ===== Logging =====
+  def logEvent(event: String): Unit = {
+    val line = s"${System.currentTimeMillis()}|$event"
+    Files.write(logPath, List(line).asJava, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+  }
 
   // ===== Inventory Operations =====
   def loadInventory(): Map[String, Int] = {
@@ -75,4 +81,3 @@ object FileStore {
   }
 
 }
-

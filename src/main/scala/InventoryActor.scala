@@ -20,21 +20,37 @@ object InventoryActor {
         inventory(updatedItems)
 
       case CheckInventoryAmount(orderId,productId, quantity, replyTo) =>
-        if (!items.contains(productId)) {
-          context.log.warn(s"Product not found: $productId")
-          replyTo ! ItemNotFound(orderId,productId)
+        FileStore.logEvent(s"Check_Inv_Start|$orderId|$productId|$quantity")
+        if (scala.util.Random.nextDouble() < 0.5) {
+          // Simulate communication failure
+          val failureType = scala.util.Random.nextInt(2)
+          if (failureType == 0) {
+            FileStore.logEvent(s"Inv_NotFound|$orderId|$productId")
+            replyTo ! ItemNotFound(orderId,productId)
+          } else {
+            FileStore.logEvent(s"Inv_Insufficient|$orderId|$productId")
+            replyTo ! InventoryNotEnough(orderId,productId)
+          }
           Behaviors.same
         } else {
-          val currentStock = items(productId)
-          if (currentStock >= quantity) {
-            val newStock = currentStock - quantity
-            val updatedItems = items + (productId -> newStock)
-            FileStore.saveInventory(updatedItems)
-            replyTo ! InventoryAvailable(orderId,productId)
-            inventory(updatedItems)
-          } else {
-            replyTo ! InventoryNotEnough(orderId,productId)
+          if (!items.contains(productId)) {
+            FileStore.logEvent(s"Inv_NotFound|$orderId|$productId")
+            replyTo ! ItemNotFound(orderId,productId)
             Behaviors.same
+          } else {
+            val currentStock = items(productId)
+            if (currentStock >= quantity) {
+              val newStock = currentStock - quantity
+              val updatedItems = items + (productId -> newStock)
+              FileStore.saveInventory(updatedItems)
+              FileStore.logEvent(s"Inv_Enough_Reduce_Success|$orderId|$productId|$quantity|$newStock")
+              replyTo ! InventoryAvailable(orderId,productId)
+              inventory(updatedItems)
+            } else {
+              FileStore.logEvent(s"Inv_Insufficient|$orderId|$productId|$currentStock|$quantity")
+              replyTo ! InventoryNotEnough(orderId,productId)
+              Behaviors.same
+            }
           }
         }
 

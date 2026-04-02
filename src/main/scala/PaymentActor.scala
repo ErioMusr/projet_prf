@@ -25,38 +25,48 @@ object PaymentActor {
   private def paymentBehavior(paymentHistory: mutable.Map[String, (PaymentRecord, Long)]): Behavior[Command] =
     Behaviors.receive { (context, message) =>
       message match {
-        // 增加了一个 requiredPrice 参数
         case ProcessPayment(orderId, productId, amount, requiredPrice, replyTo) =>
-          context.log.info(s"Processing payment for order: $orderId, amount: $amount, required: $requiredPrice")
-
-          // 核心校验转移到了这里！
-          if (amount < requiredPrice) {
-            context.log.warn(s"Insufficient funds: $amount for order $orderId (required: $requiredPrice)")
-            // 直接返回 PaymentFailed 给 UI
-            replyTo ! PaymentFailed(orderId, f"Insufficient funds! You need $$$requiredPrice%.2f, but only provided $$$amount%.2f")
-            Behaviors.same
-          } else if (amount > MAX_PAYMENT) {
-            context.log.warn(s"Payment amount too large: $amount for order $orderId")
-            replyTo ! PaymentFailed(orderId, s"Payment amount cannot exceed $MAX_PAYMENT")
+          FileStore.logEvent(s"Submit_Payment|$orderId|$productId|$amount|$requiredPrice")
+          if (scala.util.Random.nextDouble() < 0.5) {
+            FileStore.logEvent(s"Payment_Failed|$orderId|$productId|$amount|Communication failure")
+            val record = PaymentRecord(orderId, productId, amount, "FAILED", System.currentTimeMillis())
+            paymentHistory(orderId) = (record, System.currentTimeMillis())
+            FileStore.savePayment(record)
+            replyTo ! PaymentFailed(orderId, "Communication failure with payment gateway")
             Behaviors.same
           } else {
-            // Simulate payment processing
-            val paymentSucceeded = simulatePaymentGateway(amount)
-
-            if (paymentSucceeded) {
-              context.log.info(s"Payment successful for order: $orderId")
-              val record = PaymentRecord(orderId, productId, amount, "SUCCESS", System.currentTimeMillis())
-              paymentHistory(orderId) = (record, System.currentTimeMillis())
-              FileStore.savePayment(record)
-              replyTo ! PaymentSuccessful(orderId, amount)
-              paymentBehavior(paymentHistory)
-            } else {
-              context.log.warn(s"Payment declined for order: $orderId")
+            if (amount < requiredPrice) {
+              FileStore.logEvent(s"Payment_Failed|$orderId|$productId|$amount|Insufficient funds")
               val record = PaymentRecord(orderId, productId, amount, "FAILED", System.currentTimeMillis())
               paymentHistory(orderId) = (record, System.currentTimeMillis())
               FileStore.savePayment(record)
-              replyTo ! PaymentFailed(orderId, "Payment declined by payment gateway (Simulated failure)")
+              replyTo ! PaymentFailed(orderId, f"Insufficient funds! You need $$$requiredPrice%.2f, but only provided $$$amount%.2f")
               Behaviors.same
+            } else if (amount > MAX_PAYMENT) {
+              FileStore.logEvent(s"Payment_Failed|$orderId|$productId|$amount|Amount too large")
+              val record = PaymentRecord(orderId, productId, amount, "FAILED", System.currentTimeMillis())
+              paymentHistory(orderId) = (record, System.currentTimeMillis())
+              FileStore.savePayment(record)
+              replyTo ! PaymentFailed(orderId, s"Payment amount cannot exceed $MAX_PAYMENT")
+              Behaviors.same
+            } else {
+              val paymentSucceeded = simulatePaymentGateway(amount)
+
+              if (paymentSucceeded) {
+                FileStore.logEvent(s"Payment_Success|$orderId|$productId|$amount")
+                val record = PaymentRecord(orderId, productId, amount, "SUCCESS", System.currentTimeMillis())
+                paymentHistory(orderId) = (record, System.currentTimeMillis())
+                FileStore.savePayment(record)
+                replyTo ! PaymentSuccessful(orderId, amount)
+                paymentBehavior(paymentHistory)
+              } else {
+                FileStore.logEvent(s"Payment_Failed|$orderId|$productId|$amount|Gateway declined")
+                val record = PaymentRecord(orderId, productId, amount, "FAILED", System.currentTimeMillis())
+                paymentHistory(orderId) = (record, System.currentTimeMillis())
+                FileStore.savePayment(record)
+                replyTo ! PaymentFailed(orderId, "Payment declined by payment gateway (Simulated failure)")
+                Behaviors.same
+              }
             }
           }
 
@@ -92,4 +102,3 @@ object PaymentActor {
 
 // Payment record for persistence
 case class PaymentRecord(orderId: String, productId: String, amount: Double, status: String, timestamp: Long)
-

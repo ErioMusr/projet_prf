@@ -41,6 +41,8 @@ case class UpdateInventory(productId: String, newQuantity: Int, replyTo: ActorRe
 // ===== Internal Cleanup Messages =====
 case object CleanupExpiredOrdersMsg extends Command
 case object CleanupExpiredPaymentsMsg extends Command
+case class InventoryCheckTimeout(orderId: String) extends Command
+case class PaymentTimeout(orderId: String) extends Command
 
 sealed trait OrderStatusResponse
 case class OrderStatus(orderId: String, productId: String, quantity: Int, price: Double, paidAmount: Double, status: String, timestamp: Long) extends OrderStatusResponse

@@ -64,6 +64,7 @@ object OrderActor {
   ): Behavior[Command] = Behaviors.receive { (context, message) =>
     message match {
       case PlaceOrder(productId, quantity, replyTo) =>
+        FileStore.logEvent(s"PlaceOrder|$productId|$quantity")
         val orderId = s"order-${System.currentTimeMillis()}"
         context.log.info(s"Placing order $orderId for product: $productId, quantity: $quantity")
         val unitPrice = 10.0 + scala.util.Random.nextDouble() * 10.0
@@ -78,6 +79,8 @@ object OrderActor {
 
         FileStore.saveOrder(orderId, productId, quantity,totalPrice,0.0, "PENDING_INVENTORY_CHECK")
         inventoryActor ! CheckInventoryAmount(orderId, productId, quantity, inventoryResponseAdapter)
+        // Schedule timeout for inventory check
+        context.scheduleOnce(5.seconds, context.self, InventoryCheckTimeout(orderId))
         orderBehavior(inventoryActor, paymentActor, inventoryResponseAdapter, paymentResponseAdapter, orderRecords, pendingReplies, pendingPaymentReplies)
 
       case InventoryRes(res) =>
@@ -142,7 +145,7 @@ object OrderActor {
               orderRecords(orderId) = (productId, qty, price,amountpaid, "PAYMENT_SUCCESSFUL", ts)
               FileStore.saveOrder(orderId, productId, qty, price,amountpaid, "PAYMENT_SUCCESSFUL")
 
-              // Reply to pending payment request (ask pattern)
+              // Reply to pending payment request
               if (pendingPaymentReplies.contains(orderId)) {
                 context.log.info(s"Replying to payment ask for order: $orderId")
                 pendingPaymentReplies(orderId) ! PaymentSuccessful(orderId,amountPaid)
@@ -158,7 +161,7 @@ object OrderActor {
               orderRecords(orderId) = (productId, qty, price,amountpaid, "PAYMENT_FAILED", ts)
               FileStore.saveOrder(orderId, productId, qty, price,amountpaid, "PAYMENT_FAILED")
 
-              // Reply to pending payment request (ask pattern)
+              // Reply to pending payment request
               if (pendingPaymentReplies.contains(orderId)) {
                 context.log.info(s"Replying to payment ask failure for order: $orderId")
                 pendingPaymentReplies(orderId) ! PaymentFailed(orderId, reason)
@@ -173,6 +176,8 @@ object OrderActor {
           case Some((productId, _, price,_, _, _)) =>
               pendingPaymentReplies(orderId) = replyTo
             paymentActor ! ProcessPayment(orderId, productId, amount, price, paymentResponseAdapter)
+            // Schedule timeout for payment
+            context.scheduleOnce(3.seconds, context.self, PaymentTimeout(orderId))
           case None =>
             replyTo ! PaymentFailed(orderId, "Order not found")
         }
@@ -215,10 +220,26 @@ object OrderActor {
         }
         orderBehavior(inventoryActor, paymentActor, inventoryResponseAdapter, paymentResponseAdapter, orderRecords, pendingReplies, pendingPaymentReplies)
 
+      case InventoryCheckTimeout(orderId) =>
+        if (orderRecords.contains(orderId) && orderRecords(orderId)._5 == "PENDING_INVENTORY_CHECK") {
+          FileStore.logEvent(s"Check_Inv_Timeout|$orderId")
+          orderRecords.remove(orderId)
+          if (pendingReplies.contains(orderId)) {
+            pendingReplies(orderId) ! OrderCreationFailed("Inventory check timed out.")
+            pendingReplies.remove(orderId)
+          }
+        }
+        orderBehavior(inventoryActor, paymentActor, inventoryResponseAdapter, paymentResponseAdapter, orderRecords, pendingReplies, pendingPaymentReplies)
+
+      case PaymentTimeout(orderId) =>
+        if (pendingPaymentReplies.contains(orderId)) {
+          FileStore.logEvent(s"Payment_Timeout|$orderId")
+          pendingPaymentReplies(orderId) ! PaymentFailed(orderId, "Payment processing timed out.")
+          pendingPaymentReplies.remove(orderId)
+        }
+        orderBehavior(inventoryActor, paymentActor, inventoryResponseAdapter, paymentResponseAdapter, orderRecords, pendingReplies, pendingPaymentReplies)
+
       case _ => Behaviors.unhandled
     }
   }
 }
-
-
-
