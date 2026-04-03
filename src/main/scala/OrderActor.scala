@@ -37,9 +37,9 @@ object OrderActor {
     val inventoryResponseAdapter: ActorRef[InventoryResponse] =
       context.messageAdapter(response => InventoryRes(response))
 
-    val initialOrders = FileStore.loadOrders().map { o =>
+    /*val initialOrders = FileStore.loadOrders().map { o =>
       o._1 -> (o._2, o._3, o._4, o._5, o._6, o._7) // productId, qty, price, paidAmount, status, ts
-    }.toMap
+    }.toMap*/
 
 
     val paymentResponseAdapter: ActorRef[PaymentResponse] =
@@ -47,7 +47,7 @@ object OrderActor {
 
     orderBehavior(
       inventoryActor, paymentActor, inventoryResponseAdapter, paymentResponseAdapter,
-      mutable.Map.from(initialOrders),
+      mutable.Map.from(recoveredOrders),
       mutable.Map[String, ActorRef[OrderCreatedResponse]](),
       mutable.Map[String, ActorRef[PaymentResponse]]()
     )
@@ -237,7 +237,11 @@ object OrderActor {
           FileStore.logEvent(s"Payment_Timeout|$orderId")
           pendingPaymentReplies(orderId) ! PaymentFailed(orderId, "Payment processing timed out.")
           pendingPaymentReplies.remove(orderId)
-          inventoryActor ! RestoreInventory(productId, qty)
+          orderRecords.get(orderId).foreach { case (productId, qty, _, _, status, _) =>
+            if (status == "STOCK_RESERVED") {
+              inventoryActor ! RestoreInventory(productId, qty)
+            }
+          }
         }
         orderBehavior(inventoryActor, paymentActor, inventoryResponseAdapter, paymentResponseAdapter, orderRecords, pendingReplies, pendingPaymentReplies)
 
