@@ -19,7 +19,7 @@ object OrderActor {
     val now = System.currentTimeMillis()
     val recoveredOrders = allOrdersFromFile.map {
       case (id, pid, qty, price, paid, status, ts) =>
-        if (status == "STOCK_RESERVED" || status == "PENDING_INVENTORY_CHECK") {
+        if (status == "STOCK_RESERVED") {
           context.log.info(s"[RECOVERY] Found unfinished order $id. Rolling back inventory for $pid ($qty units).")
           inventoryActor ! RestoreInventory(pid, qty)
           val failStatus = "PAYMENT_FAILED_DUE_TO_SYSTEM_RESTART"
@@ -141,9 +141,9 @@ object OrderActor {
           case PaymentSuccessful(orderId,amountPaid) =>
             context.log.info(s"Payment successful for order: $orderId")
             if (orderRecords.contains(orderId)) {
-              val (productId, qty, price,amountpaid, _, ts) = orderRecords(orderId)
-              orderRecords(orderId) = (productId, qty, price,amountpaid, "PAYMENT_SUCCESSFUL", ts)
-              FileStore.saveOrder(orderId, productId, qty, price,amountpaid, "PAYMENT_SUCCESSFUL")
+              val (productId, qty, price,oldPaid, _, ts) = orderRecords(orderId)
+              orderRecords(orderId) = (productId, qty, price,amountPaid, "PAYMENT_SUCCESSFUL", ts)
+              FileStore.saveOrder(orderId, productId, qty, price,amountPaid, "PAYMENT_SUCCESSFUL")
 
               // Reply to pending payment request
               if (pendingPaymentReplies.contains(orderId)) {
@@ -158,8 +158,9 @@ object OrderActor {
             context.log.warn(s"Payment failed for order: $orderId, reason: $reason")
             if (orderRecords.contains(orderId)) {
               val (productId, qty, price,amountpaid, _, ts) = orderRecords(orderId)
-              orderRecords(orderId) = (productId, qty, price,amountpaid, "PAYMENT_FAILED", ts)
-              FileStore.saveOrder(orderId, productId, qty, price,amountpaid, "PAYMENT_FAILED")
+              inventoryActor ! RestoreInventory(productId, qty)
+              orderRecords(orderId) = (productId, qty, price, amountpaid, "PAYMENT_FAILED", ts)
+              FileStore.saveOrder(orderId, productId, qty, price, amountpaid, "PAYMENT_FAILED")
 
               // Reply to pending payment request
               if (pendingPaymentReplies.contains(orderId)) {
@@ -210,7 +211,7 @@ object OrderActor {
           context.log.info(s"Cleaning up expired order: $key")
           // Cancel unpaid orders and restore inventory
           orderRecords.get(key).foreach { case (productId, qty,price,amountpaid, status, _) =>
-            if (status == "STOCK_RESERVED" || status == "PENDING_INVENTORY_CHECK") {
+            if (status == "STOCK_RESERVED") {
               inventoryActor ! RestoreInventory(productId, qty)
               context.log.info(s"Order $key expired - cancelling and restoring inventory")
             }
@@ -237,8 +238,10 @@ object OrderActor {
           FileStore.logEvent(s"Payment_Timeout|$orderId")
           pendingPaymentReplies(orderId) ! PaymentFailed(orderId, "Payment processing timed out.")
           pendingPaymentReplies.remove(orderId)
-          orderRecords.get(orderId).foreach { case (productId, qty, _, _, status, _) =>
+          orderRecords.get(orderId).foreach { case (productId, qty, price, amountPaid, status, ts) =>
             if (status == "STOCK_RESERVED") {
+              orderRecords(orderId) = (productId, qty, price, amountPaid, "PAYMENT_TIMEOUT", ts)
+              FileStore.saveOrder(orderId, productId, qty, price, amountPaid, "PAYMENT_TIMEOUT")
               inventoryActor ! RestoreInventory(productId, qty)
             }
           }

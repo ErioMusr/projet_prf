@@ -37,6 +37,7 @@ object Main {
 
       val shutdownFuture = orderActor.ask(ref => CancelAllUnpaidOrders(ref))
       Await.result(shutdownFuture, 5.seconds)
+      Thread.sleep(1000)
 
       println("[SUCCESS] All unpaid orders cancelled and inventory released.")
 
