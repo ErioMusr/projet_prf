@@ -211,6 +211,7 @@ object OrderActor {
           // Cancel unpaid orders and restore inventory
           orderRecords.get(key).foreach { case (productId, qty,price,amountpaid, status, _) =>
             if (status == "STOCK_RESERVED" || status == "PENDING_INVENTORY_CHECK") {
+              inventoryActor ! RestoreInventory(productId, qty)
               context.log.info(s"Order $key expired - cancelling and restoring inventory")
             }
           }
@@ -236,6 +237,7 @@ object OrderActor {
           FileStore.logEvent(s"Payment_Timeout|$orderId")
           pendingPaymentReplies(orderId) ! PaymentFailed(orderId, "Payment processing timed out.")
           pendingPaymentReplies.remove(orderId)
+          inventoryActor ! RestoreInventory(productId, qty)
         }
         orderBehavior(inventoryActor, paymentActor, inventoryResponseAdapter, paymentResponseAdapter, orderRecords, pendingReplies, pendingPaymentReplies)
 
