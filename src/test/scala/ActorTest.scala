@@ -3,6 +3,7 @@ import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.SupervisorStrategy
 import org.scalatest.wordspec.AnyWordSpecLike
 import org.scalatest.matchers.should.Matchers
+import scala.concurrent.duration._
 
 class ActorTest extends ScalaTestWithActorTestKit with AnyWordSpecLike with Matchers {
 
@@ -97,6 +98,45 @@ class ActorTest extends ScalaTestWithActorTestKit with AnyWordSpecLike with Matc
       orderActor ! CancelAllUnpaidOrders(probe.ref)
       val response = probe.receiveMessage()
       response shouldBe a[ShutdownComplete]
+    }
+
+    "ignore late payment success after timeout" in {
+      val inventoryProbe = createTestProbe[Command]()
+      val paymentProbe = createTestProbe[Command]()
+      val orderActor = spawn(OrderActor(inventoryProbe.ref, paymentProbe.ref))
+
+      val createProbe = createTestProbe[OrderCreatedResponse]()
+      orderActor ! PlaceOrder("product-1", 1, createProbe.ref)
+
+      val invCheck = inventoryProbe.receiveMessage().asInstanceOf[CheckInventoryAmount]
+      invCheck.replyTo ! InventoryAvailable(invCheck.orderId, invCheck.productId)
+
+      val created = createProbe.receiveMessage().asInstanceOf[OrderCreated]
+
+      val paymentResultProbe = createTestProbe[PaymentResponse]()
+      orderActor ! PayForOrder(created.orderId, created.price, paymentResultProbe.ref)
+
+      val processPayment = paymentProbe.receiveMessage().asInstanceOf[ProcessPayment]
+
+      // Force timeout first, then deliver a late success to reproduce the race.
+      orderActor ! PaymentTimeout(created.orderId)
+
+      paymentResultProbe.receiveMessage() shouldBe PaymentFailed(created.orderId, "Payment processing timed out.")
+
+      val restored = inventoryProbe.receiveMessage().asInstanceOf[RestoreInventory]
+      restored.productId shouldBe created.productId
+      restored.quantity shouldBe created.quantity
+
+      val statusProbe = createTestProbe[OrderStatusResponse]()
+      orderActor ! GetOrderStatus(created.orderId, statusProbe.ref)
+      statusProbe.receiveMessage().asInstanceOf[OrderStatus].status shouldBe "PAYMENT_TIMEOUT"
+
+      processPayment.replyTo ! PaymentSuccessful(created.orderId, created.price)
+
+      orderActor ! GetOrderStatus(created.orderId, statusProbe.ref)
+      statusProbe.receiveMessage().asInstanceOf[OrderStatus].status shouldBe "PAYMENT_TIMEOUT"
+
+      inventoryProbe.expectNoMessage(200.millis)
     }
   }
 

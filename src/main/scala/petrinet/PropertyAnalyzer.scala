@@ -77,28 +77,16 @@ object PropertyAnalyzer {
 
   // ===== Business Invariants =====
 
-  /** Check: inventory tokens are never negative in any reachable state */
-  def checkInventoryNonNegativity(graph: ReachabilityGraph, inventoryPlace: Place): AnalysisResult = {
-    val violations = graph.nodes.filter { node =>
-      node.marking.getOrElse(inventoryPlace, 0) < 0
-    }
+  /** Check: order is in at most one state at any time (mutual exclusion) */
+  def checkOrderStateMutualExclusion(graph: ReachabilityGraph): AnalysisResult = {
+    val orderPlaces = Set(
+      OrderSystemPetriNet.P2, OrderSystemPetriNet.P3,
+      OrderSystemPetriNet.P4, OrderSystemPetriNet.P5,
+      OrderSystemPetriNet.P6
+    )
 
-    if (violations.isEmpty) {
-      AnalysisResult("Inventory Non-Negativity", satisfied = true,
-        s"Inventory is >= 0 in all ${graph.nodeCount} reachable states.")
-    } else {
-      val details = violations.map { node =>
-        s"  State #${node.id}: inventory = ${node.marking.getOrElse(inventoryPlace, 0)}"
-      }.mkString("\n")
-      AnalysisResult("Inventory Non-Negativity", satisfied = false,
-        s"${violations.size} state(s) violate inventory non-negativity:\n$details")
-    }
-  }
-
-  /** Check: an order is in at most one state at any time (mutual exclusion of order states) */
-  def checkOrderStateMutualExclusion(graph: ReachabilityGraph, orderStatePlaces: Set[Place]): AnalysisResult = {
     val violations = graph.nodes.filter { node =>
-      val activeStates = orderStatePlaces.count(p => node.marking.getOrElse(p, 0) > 0)
+      val activeStates = orderPlaces.count(p => node.marking.getOrElse(p, 0) > 0)
       activeStates > 1
     }
 
@@ -107,28 +95,30 @@ object PropertyAnalyzer {
         s"Order is in at most one state in all ${graph.nodeCount} reachable states.")
     } else {
       val details = violations.take(5).map { node =>
-        val activeStates = orderStatePlaces.filter(p => node.marking.getOrElse(p, 0) > 0)
-        s"  State #${node.id}: active in ${activeStates.map(_.id).mkString(", ")}"
+        val activeStates = orderPlaces.filter(p => node.marking.getOrElse(p, 0) > 0)
+        s"  State #${node.id}: ${OrderSystemPetriNet.markingVector(node.marking)} " +
+          s"active in ${activeStates.map(_.id).mkString(", ")}"
       }.mkString("\n")
       AnalysisResult("Order State Mutual Exclusion", satisfied = false,
         s"${violations.size} state(s) violate mutual exclusion:\n$details")
     }
   }
 
-  /** Check token conservation across a set of places */
-  def checkTokenConservation(graph: ReachabilityGraph, conservedPlaces: Set[Place], expectedTotal: Int): AnalysisResult = {
+  /** Check token conservation: total tokens across all places = 1 (single order token) */
+  def checkTokenConservation(graph: ReachabilityGraph): AnalysisResult = {
+    val allPlaces = OrderSystemPetriNet.allPlaces
     val violations = graph.nodes.filter { node =>
-      val total = conservedPlaces.toList.map(p => node.marking.getOrElse(p, 0)).sum
-      total != expectedTotal
+      val total = allPlaces.toList.map(p => node.marking.getOrElse(p, 0)).sum
+      total != 1
     }
 
     if (violations.isEmpty) {
       AnalysisResult("Token Conservation", satisfied = true,
-        s"Total tokens across ${conservedPlaces.map(_.id).mkString(", ")} = $expectedTotal in all states.")
+        s"Total tokens = 1 (conserved) in all ${graph.nodeCount} reachable states.")
     } else {
       val details = violations.take(5).map { node =>
-        val total = conservedPlaces.toList.map(p => node.marking.getOrElse(p, 0)).sum
-        s"  State #${node.id}: total = $total (expected $expectedTotal)"
+        val total = allPlaces.toList.map(p => node.marking.getOrElse(p, 0)).sum
+        s"  State #${node.id}: ${OrderSystemPetriNet.markingVector(node.marking)} total=$total"
       }.mkString("\n")
       AnalysisResult("Token Conservation", satisfied = false,
         s"${violations.size} state(s) violate conservation:\n$details")
@@ -143,10 +133,9 @@ object PropertyAnalyzer {
     val placeList = net.places.toList.sortBy(_.id)
     val transList = net.transitions.toList.sortBy(_.id)
 
-    // Simple brute-force search for small nets: try unit vectors and simple combinations
     val invariants = scala.collection.mutable.ListBuffer[Map[Place, Int]]()
 
-    // Check individual places (trivially conserved if all transitions have 0 net effect)
+    // Check individual places
     for (p <- placeList) {
       val allZero = transList.forall(t => matrix(p)(t) == 0)
       if (allZero) {
@@ -158,20 +147,33 @@ object PropertyAnalyzer {
     for (i <- placeList.indices; j <- (i + 1) until placeList.size) {
       val p1 = placeList(i)
       val p2 = placeList(j)
-      // Check if p1 + p2 is an S-invariant
       val isInvariant = transList.forall { t =>
         matrix(p1)(t) + matrix(p2)(t) == 0
       }
       if (isInvariant) {
         invariants += Map(p1 -> 1, p2 -> 1)
       }
-      // Check if p1 - p2 is an S-invariant (with coefficient -1)
-      val isInvariantNeg = transList.forall { t =>
-        matrix(p1)(t) - matrix(p2)(t) == 0
+    }
+
+    // Check triples
+    for (i <- placeList.indices; j <- (i + 1) until placeList.size; k <- (j + 1) until placeList.size) {
+      val p1 = placeList(i)
+      val p2 = placeList(j)
+      val p3 = placeList(k)
+      val isInvariant = transList.forall { t =>
+        matrix(p1)(t) + matrix(p2)(t) + matrix(p3)(t) == 0
       }
-      if (isInvariantNeg) {
-        invariants += Map(p1 -> 1, p2 -> -1)
+      if (isInvariant) {
+        invariants += Map(p1 -> 1, p2 -> 1, p3 -> 1)
       }
+    }
+
+    // Check all 6 places (full conservation)
+    val fullConservation = transList.forall { t =>
+      placeList.map(p => matrix(p)(t)).sum == 0
+    }
+    if (fullConservation) {
+      invariants += placeList.map(p => p -> 1).toMap
     }
 
     invariants.toList
@@ -218,7 +220,6 @@ object PropertyAnalyzer {
     println("PETRI NET PROPERTY ANALYSIS REPORT")
     println(s"${"=" * 60}")
 
-    // Structural properties
     val deadlockResult = checkDeadlockFreedom(net, graph)
     results += deadlockResult
     printResult(deadlockResult)
@@ -235,29 +236,19 @@ object PropertyAnalyzer {
     results += livenessResult
     printResult(livenessResult)
 
-    // Business invariants
-    val invResult = checkInventoryNonNegativity(graph, OrderSystemPetriNet.P_inventory)
-    results += invResult
-    printResult(invResult)
-
-    val orderStatePlaces = Set(
-      OrderSystemPetriNet.P_pending_inventory,
-      OrderSystemPetriNet.P_stock_reserved,
-      OrderSystemPetriNet.P_payment_processing,
-      OrderSystemPetriNet.P_payment_success,
-      OrderSystemPetriNet.P_payment_failed,
-      OrderSystemPetriNet.P_inv_timeout,
-      OrderSystemPetriNet.P_pay_timeout
-    )
-    val mutexResult = checkOrderStateMutualExclusion(graph, orderStatePlaces)
+    val mutexResult = checkOrderStateMutualExclusion(graph)
     results += mutexResult
     printResult(mutexResult)
 
-    // S-invariants and T-invariants
+    val conservationResult = checkTokenConservation(graph)
+    results += conservationResult
+    printResult(conservationResult)
+
+    // S-invariants
     println(s"\n--- S-Invariants (Place Invariants) ---")
     val sInvariants = computeSInvariants(net)
     if (sInvariants.isEmpty) {
-      println("  No S-invariants found via simple search.")
+      println("  No S-invariants found.")
     } else {
       sInvariants.foreach { inv =>
         val terms = inv.toList.sortBy(_._1.id).map { case (p, coeff) =>
@@ -267,10 +258,11 @@ object PropertyAnalyzer {
       }
     }
 
+    // T-invariants
     println(s"\n--- T-Invariants (Transition Invariants) ---")
     val tInvariants = computeTInvariants(net)
     if (tInvariants.isEmpty) {
-      println("  No T-invariants found via simple search.")
+      println("  No T-invariants found.")
     } else {
       tInvariants.foreach { inv =>
         val terms = inv.toList.sortBy(_._1.id).map { case (t, coeff) =>
@@ -282,8 +274,7 @@ object PropertyAnalyzer {
 
     println(s"\n${"=" * 60}")
     val passed = results.count(_.satisfied)
-    val total = results.size
-    println(s"SUMMARY: $passed/$total properties satisfied")
+    println(s"SUMMARY: $passed/${results.size} properties satisfied")
     println(s"${"=" * 60}")
 
     results.toList

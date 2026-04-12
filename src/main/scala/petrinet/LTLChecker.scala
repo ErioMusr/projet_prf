@@ -8,8 +8,6 @@ import scala.collection.mutable
  *
  * Supported operators:
  *   G (globally/always), F (eventually/finally), X (next), U (until)
- *
- * Implementation: checks LTL properties over all paths in the reachability graph.
  */
 
 // ===== LTL Formula AST =====
@@ -29,21 +27,19 @@ case class Or(f1: LTLFormula, f2: LTLFormula) extends LTLFormula {
 case class Implies(f1: LTLFormula, f2: LTLFormula) extends LTLFormula {
   override def toString: String = s"($f1 -> $f2)"
 }
-// Temporal operators
-case class Globally(f: LTLFormula) extends LTLFormula {         // G(f): f holds in all future states
+case class Globally(f: LTLFormula) extends LTLFormula {
   override def toString: String = s"G($f)"
 }
-case class Eventually(f: LTLFormula) extends LTLFormula {       // F(f): f holds in some future state
+case class Eventually(f: LTLFormula) extends LTLFormula {
   override def toString: String = s"F($f)"
 }
-case class Next(f: LTLFormula) extends LTLFormula {             // X(f): f holds in the next state
+case class Next(f: LTLFormula) extends LTLFormula {
   override def toString: String = s"X($f)"
 }
-case class Until(f1: LTLFormula, f2: LTLFormula) extends LTLFormula { // f1 U f2: f1 holds until f2 holds
+case class Until(f1: LTLFormula, f2: LTLFormula) extends LTLFormula {
   override def toString: String = s"($f1 U $f2)"
 }
 
-// ===== Check Result =====
 case class LTLResult(
   formula: LTLFormula,
   satisfied: Boolean,
@@ -52,56 +48,36 @@ case class LTLResult(
 
 object LTLChecker {
 
-  /**
-   * Check an LTL formula over the reachability graph.
-   * Uses exhaustive path exploration with cycle detection.
-   */
   def check(formula: LTLFormula, graph: ReachabilityGraph): LTLResult = {
     formula match {
-      case Globally(f) =>
-        checkGlobally(f, graph)
-      case Eventually(f) =>
-        checkEventually(f, graph)
-      case Implies(antecedent, consequent) =>
-        checkImplication(antecedent, consequent, graph)
-      case _ =>
-        checkGeneric(formula, graph)
+      case Globally(f)                  => checkGlobally(f, graph)
+      case Eventually(f)               => checkEventually(f, graph)
+      case Implies(antecedent, consequent) => checkImplication(antecedent, consequent, graph)
+      case _                           => checkGeneric(formula, graph)
     }
   }
 
   /** G(f): f must hold in ALL reachable states */
   private def checkGlobally(f: LTLFormula, graph: ReachabilityGraph): LTLResult = {
-    val violation = graph.nodes.find { node =>
-      !evaluateState(f, node.marking)
-    }
-
+    val violation = graph.nodes.find(node => !evaluateState(f, node.marking))
     violation match {
       case Some(node) =>
-        val path = findPathTo(graph, node.id)
-        LTLResult(Globally(f), satisfied = false, counterexamplePath = Some(path))
+        LTLResult(Globally(f), satisfied = false, counterexamplePath = Some(findPathTo(graph, node.id)))
       case None =>
         LTLResult(Globally(f), satisfied = true)
     }
   }
 
-  /** F(f): f must hold in at least one reachable state on every path from initial state */
+  /** F(f): f must be reachable from the initial state */
   private def checkEventually(f: LTLFormula, graph: ReachabilityGraph): LTLResult = {
-    // Check if there exists a path from initial state that never satisfies f
-    // This means checking for cycles that don't include any state satisfying f
     val satisfyingStates = graph.nodes.filter(n => evaluateState(f, n.marking)).map(_.id).toSet
 
     if (satisfyingStates.isEmpty) {
       LTLResult(Eventually(f), satisfied = false, counterexamplePath = Some(List(graph.initialNodeId)))
     } else {
-      // Check if all terminal paths (including cycles) eventually reach a satisfying state
       val canReachSatisfying = mutable.Set[Int]()
-
-      // BFS backwards from satisfying states
       val queue = mutable.Queue[Int]()
-      satisfyingStates.foreach { id =>
-        canReachSatisfying += id
-        queue.enqueue(id)
-      }
+      satisfyingStates.foreach { id => canReachSatisfying += id; queue.enqueue(id) }
 
       while (queue.nonEmpty) {
         val current = queue.dequeue()
@@ -121,18 +97,14 @@ object LTLChecker {
     }
   }
 
-  /** p -> G(q): for all states where p holds, q must hold in all reachable successor states */
+  /** Implication check */
   private def checkImplication(antecedent: LTLFormula, consequent: LTLFormula, graph: ReachabilityGraph): LTLResult = {
     consequent match {
       case Eventually(f) =>
-        // p -> F(f): whenever p holds, f must eventually hold
         val pStates = graph.nodes.filter(n => evaluateState(antecedent, n.marking))
         val fStates = graph.nodes.filter(n => evaluateState(f, n.marking)).map(_.id).toSet
 
-        val violation = pStates.find { pNode =>
-          !canReach(graph, pNode.id, fStates)
-        }
-
+        val violation = pStates.find(pNode => !canReach(graph, pNode.id, fStates))
         violation match {
           case Some(node) =>
             LTLResult(Implies(antecedent, consequent), satisfied = false,
@@ -142,11 +114,9 @@ object LTLChecker {
         }
 
       case _ =>
-        // Generic implication: in all states, if antecedent holds then consequent holds
         val violation = graph.nodes.find { node =>
           evaluateState(antecedent, node.marking) && !evaluateState(consequent, node.marking)
         }
-
         violation match {
           case Some(node) =>
             LTLResult(Implies(antecedent, consequent), satisfied = false,
@@ -157,12 +127,8 @@ object LTLChecker {
     }
   }
 
-  /** Generic formula check: evaluate in all reachable states */
   private def checkGeneric(formula: LTLFormula, graph: ReachabilityGraph): LTLResult = {
-    val violation = graph.nodes.find { node =>
-      !evaluateState(formula, node.marking)
-    }
-
+    val violation = graph.nodes.find(node => !evaluateState(formula, node.marking))
     violation match {
       case Some(node) =>
         LTLResult(formula, satisfied = false, counterexamplePath = Some(findPathTo(graph, node.id)))
@@ -171,101 +137,76 @@ object LTLChecker {
     }
   }
 
-  /** Evaluate a state-level formula (non-temporal) against a marking */
+  /** Evaluate a state-level formula against a marking */
   private def evaluateState(f: LTLFormula, m: Marking): Boolean = f match {
     case Atom(pred, _)    => pred(m)
     case Not(inner)       => !evaluateState(inner, m)
     case And(f1, f2)      => evaluateState(f1, m) && evaluateState(f2, m)
     case Or(f1, f2)       => evaluateState(f1, m) || evaluateState(f2, m)
     case Implies(f1, f2)  => !evaluateState(f1, m) || evaluateState(f2, m)
-    case _                => true // temporal operators evaluated at graph level
+    case _                => true
   }
 
-  /** BFS to find a path from initial state to target node */
   private def findPathTo(graph: ReachabilityGraph, targetId: Int): List[Int] = {
     if (targetId == graph.initialNodeId) return List(graph.initialNodeId)
-
     val visited = mutable.Set[Int]()
     val parent = mutable.Map[Int, Int]()
     val queue = mutable.Queue[Int]()
-
     queue.enqueue(graph.initialNodeId)
     visited += graph.initialNodeId
 
     while (queue.nonEmpty) {
       val current = queue.dequeue()
       if (current == targetId) {
-        // Reconstruct path
         val path = mutable.ListBuffer[Int]()
         var node = targetId
-        while (node != graph.initialNodeId) {
-          path.prepend(node)
-          node = parent(node)
-        }
+        while (node != graph.initialNodeId) { path.prepend(node); node = parent(node) }
         path.prepend(graph.initialNodeId)
         return path.toList
       }
-
       graph.successors(current).foreach { case (nextId, _) =>
-        if (!visited.contains(nextId)) {
-          visited += nextId
-          parent(nextId) = current
-          queue.enqueue(nextId)
-        }
+        if (!visited.contains(nextId)) { visited += nextId; parent(nextId) = current; queue.enqueue(nextId) }
       }
     }
-
-    List(graph.initialNodeId, targetId) // fallback
+    List(graph.initialNodeId, targetId)
   }
 
-  /** Check if a node can reach any node in the target set */
   private def canReach(graph: ReachabilityGraph, fromId: Int, targets: Set[Int]): Boolean = {
     if (targets.contains(fromId)) return true
-
     val visited = mutable.Set[Int]()
     val queue = mutable.Queue[Int]()
-    queue.enqueue(fromId)
-    visited += fromId
-
+    queue.enqueue(fromId); visited += fromId
     while (queue.nonEmpty) {
       val current = queue.dequeue()
       if (targets.contains(current)) return true
-
       graph.successors(current).foreach { case (nextId, _) =>
-        if (!visited.contains(nextId)) {
-          visited += nextId
-          queue.enqueue(nextId)
-        }
+        if (!visited.contains(nextId)) { visited += nextId; queue.enqueue(nextId) }
       }
     }
-
     false
   }
 
-  // ===== Predefined Atomic Propositions for Order System =====
+  // ===== Predefined Atomic Propositions (matching P1-P6) =====
 
-  def inventoryNonNegative: Atom = Atom(
-    m => m.getOrElse(OrderSystemPetriNet.P_inventory, 0) >= 0,
-    "inventory >= 0"
+  def inP1_Idle: Atom = Atom(m => m.getOrElse(OrderSystemPetriNet.P1, 0) > 0, "in_P1_Idle")
+  def inP2_Pending: Atom = Atom(m => m.getOrElse(OrderSystemPetriNet.P2, 0) > 0, "in_P2_Order_Pending")
+  def inP3_Reserved: Atom = Atom(m => m.getOrElse(OrderSystemPetriNet.P3, 0) > 0, "in_P3_Order_Reserved")
+  def inP4_Payment: Atom = Atom(m => m.getOrElse(OrderSystemPetriNet.P4, 0) > 0, "in_P4_Payment_Processing")
+  def inP5_Confirmed: Atom = Atom(m => m.getOrElse(OrderSystemPetriNet.P5, 0) > 0, "in_P5_Order_Confirmed")
+  def inP6_Fail: Atom = Atom(m => m.getOrElse(OrderSystemPetriNet.P6, 0) > 0, "in_P6_Fail")
+
+  /** Order has reached a terminal state (confirmed or fail) */
+  def orderTerminated: Atom = Atom(
+    m => m.getOrElse(OrderSystemPetriNet.P5, 0) > 0 ||
+         m.getOrElse(OrderSystemPetriNet.P6, 0) > 0 ||
+         m.getOrElse(OrderSystemPetriNet.P1, 0) > 0,
+    "order_terminated_or_idle"
   )
 
-  def orderInState(place: Place): Atom = Atom(
-    m => m.getOrElse(place, 0) > 0,
-    s"order_in_${place.id}"
-  )
-
-  def orderPlaced: Atom = orderInState(OrderSystemPetriNet.P_pending_inventory)
-
-  def orderCompleted: Atom = Atom(
-    m => m.getOrElse(OrderSystemPetriNet.P_payment_success, 0) > 0 ||
-         m.getOrElse(OrderSystemPetriNet.P_payment_failed, 0) > 0 ||
-         m.getOrElse(OrderSystemPetriNet.P_idle, 0) > 0,
-    "order_completed_or_failed"
-  )
-
-  def systemIdle: Atom = Atom(
-    m => m.getOrElse(OrderSystemPetriNet.P_idle, 0) > 0,
-    "system_idle"
+  /** Exactly one token exists in the entire net */
+  def singleToken: Atom = Atom(
+    m => OrderSystemPetriNet.allPlaces.toList.map(p => m.getOrElse(p, 0)).sum == 1,
+    "single_token_conservation"
   )
 
   // ===== Run predefined LTL checks =====
@@ -277,46 +218,45 @@ object LTLChecker {
     println("LTL MODEL CHECKING RESULTS")
     println(s"${"=" * 60}")
 
-    // Safety: inventory is always non-negative
-    val safety1 = check(Globally(inventoryNonNegative), graph)
-    results += safety1
-    printLTLResult(safety1)
+    // Safety S1: Token conservation — always exactly 1 token in the net
+    val s1 = check(Globally(singleToken), graph)
+    results += s1
+    printLTLResult("S1", "G(token_count = 1) — Token conservation", s1)
 
-    // Safety: no simultaneous payment_success and payment_failed
+    // Safety S2: P5 and P6 are mutually exclusive (can't be confirmed AND failed)
     val noConflict = Atom(
-      m => !(m.getOrElse(OrderSystemPetriNet.P_payment_success, 0) > 0 &&
-             m.getOrElse(OrderSystemPetriNet.P_payment_failed, 0) > 0),
-      "no_simultaneous_success_and_failure"
+      m => !(m.getOrElse(OrderSystemPetriNet.P5, 0) > 0 &&
+             m.getOrElse(OrderSystemPetriNet.P6, 0) > 0),
+      "not(P5 > 0 AND P6 > 0)"
     )
-    val safety2 = check(Globally(noConflict), graph)
-    results += safety2
-    printLTLResult(safety2)
+    val s2 = check(Globally(noConflict), graph)
+    results += s2
+    printLTLResult("S2", "G(!(confirmed AND failed)) — Mutual exclusion", s2)
 
-    // Safety: stock_reserved implies inventory was consumed
-    val safety3 = check(Globally(Atom(
-      m => {
-        val stockReserved = m.getOrElse(OrderSystemPetriNet.P_stock_reserved, 0) > 0
-        val payProcessing = m.getOrElse(OrderSystemPetriNet.P_payment_processing, 0) > 0
-        // If processing a payment, we should have come from stock_reserved
-        true // structural guarantee by the net
-      },
-      "stock_reserved_implies_inventory_consumed"
-    )), graph)
-    results += safety3
-    printLTLResult(safety3)
-
-    // Liveness: if an order is placed, it eventually completes or fails
-    val liveness1 = check(
-      Implies(orderPlaced, Eventually(orderCompleted)),
-      graph
+    // Safety S3: If in P4, then not in P1 (payment processing implies not idle)
+    val paymentImpliesNotIdle = Atom(
+      m => !(m.getOrElse(OrderSystemPetriNet.P4, 0) > 0 &&
+             m.getOrElse(OrderSystemPetriNet.P1, 0) > 0),
+      "not(P4 > 0 AND P1 > 0)"
     )
-    results += liveness1
-    printLTLResult(liveness1)
+    val s3 = check(Globally(paymentImpliesNotIdle), graph)
+    results += s3
+    printLTLResult("S3", "G(!(processing AND idle)) — State consistency", s3)
 
-    // Liveness: the system can always eventually return to idle
-    val liveness2 = check(Eventually(systemIdle), graph)
-    results += liveness2
-    printLTLResult(liveness2)
+    // Liveness L1: If order is pending, it eventually terminates
+    val l1 = check(Implies(inP2_Pending, Eventually(orderTerminated)), graph)
+    results += l1
+    printLTLResult("L1", "pending -> F(terminated) — Order always terminates", l1)
+
+    // Liveness L2: The system can always eventually return to idle
+    val l2 = check(Eventually(inP1_Idle), graph)
+    results += l2
+    printLTLResult("L2", "F(idle) — System can return to idle", l2)
+
+    // Liveness L3: If payment is processing, it eventually resolves
+    val l3 = check(Implies(inP4_Payment, Eventually(Or(inP5_Confirmed, inP6_Fail))), graph)
+    results += l3
+    printLTLResult("L3", "payment -> F(confirmed OR fail) — Payment resolves", l3)
 
     println(s"\n${"=" * 60}")
     val passed = results.count(_.satisfied)
@@ -326,9 +266,10 @@ object LTLChecker {
     results.toList
   }
 
-  private def printLTLResult(result: LTLResult): Unit = {
+  private def printLTLResult(id: String, description: String, result: LTLResult): Unit = {
     val status = if (result.satisfied) "PASS" else "FAIL"
-    println(s"\n[$status] ${result.formula}")
+    println(s"\n[$status] $id: $description")
+    println(s"  Formula: ${result.formula}")
     result.counterexamplePath.foreach { path =>
       println(s"  Counterexample path: ${path.mkString(" -> ")}")
     }

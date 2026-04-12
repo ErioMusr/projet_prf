@@ -139,35 +139,44 @@ object OrderActor {
       case PaymentRes(res) =>
         res match {
           case PaymentSuccessful(orderId,amountPaid) =>
-            context.log.info(s"Payment successful for order: $orderId")
-            if (orderRecords.contains(orderId)) {
-              val (productId, qty, price,oldPaid, _, ts) = orderRecords(orderId)
-              orderRecords(orderId) = (productId, qty, price,amountPaid, "PAYMENT_SUCCESSFUL", ts)
-              FileStore.saveOrder(orderId, productId, qty, price,amountPaid, "PAYMENT_SUCCESSFUL")
+            orderRecords.get(orderId) match {
+              // Accept payment result only for active in-flight payment to avoid timeout races.
+              case Some((productId, qty, price, _, status, ts))
+                if status == "STOCK_RESERVED" && pendingPaymentReplies.contains(orderId) =>
+                context.log.info(s"Payment successful for order: $orderId")
+                orderRecords(orderId) = (productId, qty, price,amountPaid, "PAYMENT_SUCCESSFUL", ts)
+                FileStore.saveOrder(orderId, productId, qty, price,amountPaid, "PAYMENT_SUCCESSFUL")
 
-              // Reply to pending payment request
-              if (pendingPaymentReplies.contains(orderId)) {
                 context.log.info(s"Replying to payment ask for order: $orderId")
                 pendingPaymentReplies(orderId) ! PaymentSuccessful(orderId,amountPaid)
                 pendingPaymentReplies.remove(orderId)
-              }
+
+              case Some((_, _, _, _, status, _)) =>
+                context.log.warn(s"Ignoring late/unexpected payment success for order: $orderId, status: $status")
+
+              case None =>
+                context.log.warn(s"Ignoring payment success for unknown order: $orderId")
             }
             orderBehavior(inventoryActor, paymentActor, inventoryResponseAdapter, paymentResponseAdapter, orderRecords, pendingReplies, pendingPaymentReplies)
 
           case PaymentFailed(orderId, reason) =>
-            context.log.warn(s"Payment failed for order: $orderId, reason: $reason")
-            if (orderRecords.contains(orderId)) {
-              val (productId, qty, price,amountpaid, _, ts) = orderRecords(orderId)
-              inventoryActor ! RestoreInventory(productId, qty)
-              orderRecords(orderId) = (productId, qty, price, amountpaid, "PAYMENT_FAILED", ts)
-              FileStore.saveOrder(orderId, productId, qty, price, amountpaid, "PAYMENT_FAILED")
+            orderRecords.get(orderId) match {
+              case Some((productId, qty, price,amountpaid, status, ts))
+                if status == "STOCK_RESERVED" && pendingPaymentReplies.contains(orderId) =>
+                context.log.warn(s"Payment failed for order: $orderId, reason: $reason")
+                inventoryActor ! RestoreInventory(productId, qty)
+                orderRecords(orderId) = (productId, qty, price, amountpaid, "PAYMENT_FAILED", ts)
+                FileStore.saveOrder(orderId, productId, qty, price, amountpaid, "PAYMENT_FAILED")
 
-              // Reply to pending payment request
-              if (pendingPaymentReplies.contains(orderId)) {
                 context.log.info(s"Replying to payment ask failure for order: $orderId")
                 pendingPaymentReplies(orderId) ! PaymentFailed(orderId, reason)
                 pendingPaymentReplies.remove(orderId)
-              }
+
+              case Some((_, _, _, _, status, _)) =>
+                context.log.warn(s"Ignoring late/unexpected payment failure for order: $orderId, status: $status")
+
+              case None =>
+                context.log.warn(s"Ignoring payment failure for unknown order: $orderId")
             }
             orderBehavior(inventoryActor, paymentActor, inventoryResponseAdapter, paymentResponseAdapter, orderRecords, pendingReplies, pendingPaymentReplies)
         }

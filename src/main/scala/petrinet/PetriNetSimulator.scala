@@ -23,9 +23,6 @@ case class SimulationTrace(
 
 object PetriNetSimulator {
 
-  /**
-   * Run simulation for a fixed number of steps, choosing transitions randomly.
-   */
   def simulate(net: PetriNet, initialMarking: Marking, maxSteps: Int = 50, seed: Long = System.currentTimeMillis()): SimulationTrace = {
     val rng = new Random(seed)
     val steps = mutable.ListBuffer[SimulationStep]()
@@ -37,20 +34,14 @@ object PetriNetSimulator {
         println(s"  [Step $step] DEADLOCK - no transitions enabled")
         return SimulationTrace(steps.toList, initialMarking, currentMarking)
       }
-
       val chosen = enabled(rng.nextInt(enabled.size))
       val newMarking = net.fire(chosen, currentMarking).get
-
       steps += SimulationStep(step, chosen, currentMarking, newMarking)
       currentMarking = newMarking
     }
-
     SimulationTrace(steps.toList, initialMarking, currentMarking)
   }
 
-  /**
-   * Run simulation following a specific sequence of transitions.
-   */
   def simulateSequence(net: PetriNet, initialMarking: Marking, transitionIds: List[String]): SimulationTrace = {
     val steps = mutable.ListBuffer[SimulationStep]()
     var currentMarking = initialMarking
@@ -59,104 +50,103 @@ object PetriNetSimulator {
       val transition = net.transitions.find(_.id == tId) match {
         case Some(t) => t
         case None =>
-          println(s"  [Step ${idx + 1}] ERROR: Transition '$tId' not found in net")
+          println(s"  [Step ${idx + 1}] ERROR: Transition '$tId' not found")
           return SimulationTrace(steps.toList, initialMarking, currentMarking)
       }
-
       if (!net.isEnabled(transition, currentMarking)) {
         println(s"  [Step ${idx + 1}] ERROR: Transition '${transition.id}' is not enabled")
+        println(s"    Current marking: ${OrderSystemPetriNet.markingVector(currentMarking)}")
         return SimulationTrace(steps.toList, initialMarking, currentMarking)
       }
-
       val newMarking = net.fire(transition, currentMarking).get
       steps += SimulationStep(idx + 1, transition, currentMarking, newMarking)
       currentMarking = newMarking
     }
-
     SimulationTrace(steps.toList, initialMarking, currentMarking)
   }
 
-  /** Print a simulation trace */
   def printTrace(trace: SimulationTrace, net: PetriNet): Unit = {
-    println(s"\n${"=" * 60}")
-    println("PETRI NET SIMULATION TRACE")
-    println(s"${"=" * 60}")
-    println(s"Total steps: ${trace.steps.size}")
-    println(s"\nInitial marking:")
-    println(formatNonZero(trace.initialMarking))
+    println(s"  Total steps: ${trace.steps.size}")
+    println(s"  Initial: ${OrderSystemPetriNet.markingVector(trace.initialMarking)}")
 
     trace.steps.foreach { step =>
-      println(s"\n--- Step ${step.stepNumber}: Fire ${step.transition.id} ---")
-      println(s"  Result: ${formatNonZero(step.markingAfter)}")
+      println(s"  Step ${step.stepNumber}: ${step.transition.id}")
+      println(s"    -> ${OrderSystemPetriNet.markingVector(step.markingAfter)}")
     }
 
-    println(s"\nFinal marking:")
-    println(formatNonZero(trace.finalMarking))
-    println(s"${"=" * 60}")
+    println(s"  Final:   ${OrderSystemPetriNet.markingVector(trace.finalMarking)}")
   }
 
-  /** Run predefined scenarios for the order system */
+  /** Run predefined scenarios matching the diagram */
   def runOrderSystemScenarios(net: PetriNet): Unit = {
     println(s"\n${"=" * 60}")
     println("PETRI NET SCENARIO SIMULATIONS")
     println(s"${"=" * 60}")
 
-    // Scenario 1: Happy path - order placed, inventory ok, payment success
-    println("\n--- Scenario 1: Happy Path ---")
-    val happyPath = simulateSequence(net, OrderSystemPetriNet.initialMarking(), List(
-      "T_place_order",
-      "T_inventory_ok",
-      "T_process_payment",
-      "T_payment_ok"
-    ))
-    printTrace(happyPath, net)
+    val m0 = OrderSystemPetriNet.initialMarking()
 
-    // Scenario 2: Inventory failure
-    println("\n--- Scenario 2: Inventory Failure ---")
-    val invFail = simulateSequence(net, OrderSystemPetriNet.initialMarking(), List(
-      "T_place_order",
-      "T_inventory_fail"
+    // Scenario 1: Happy Path — PlaceOrder -> InvOK -> Payment -> Success
+    println("\n--- Scenario 1: Happy Path (P1->P2->P3->P4->P5) ---")
+    val s1 = simulateSequence(net, m0, List(
+      "T1_PlaceOrder",
+      "T2_Inv_Enough_Reduce_Success",
+      "T6_Submit_Payment",
+      "T7_Payment_Success"
     ))
-    printTrace(invFail, net)
+    printTrace(s1, net)
 
-    // Scenario 3: Payment failure with inventory restore
-    println("\n--- Scenario 3: Payment Failure ---")
-    val payFail = simulateSequence(net, OrderSystemPetriNet.initialMarking(), List(
-      "T_place_order",
-      "T_inventory_ok",
-      "T_process_payment",
-      "T_payment_fail",
-      "T_restore_inv_fail"
+    // Scenario 2: Inventory Not Found (P1->P2->P6->P1)
+    println("\n--- Scenario 2: Inventory Not Found ---")
+    val s2 = simulateSequence(net, m0, List(
+      "T1_PlaceOrder",
+      "T3_Inv_NotFound",
+      "T10_Fail_Recovery"
     ))
-    printTrace(payFail, net)
+    printTrace(s2, net)
 
-    // Scenario 4: Inventory communication failure
-    println("\n--- Scenario 4: Communication Failure ---")
-    val commFail = simulateSequence(net, OrderSystemPetriNet.initialMarking(), List(
-      "T_place_order",
-      "T_inv_comm_fail"
+    // Scenario 3: Inventory Insufficient (P1->P2->P6->P1)
+    println("\n--- Scenario 3: Inventory Insufficient ---")
+    val s3 = simulateSequence(net, m0, List(
+      "T1_PlaceOrder",
+      "T4_Inv_Insufficient",
+      "T10_Fail_Recovery"
     ))
-    printTrace(commFail, net)
+    printTrace(s3, net)
 
-    // Scenario 5: Payment timeout with inventory restore
-    println("\n--- Scenario 5: Payment Timeout ---")
-    val payTimeout = simulateSequence(net, OrderSystemPetriNet.initialMarking(), List(
-      "T_place_order",
-      "T_inventory_ok",
-      "T_process_payment",
-      "T_pay_timeout",
-      "T_restore_inv_timeout"
+    // Scenario 4: Payment Failed (P1->P2->P3->P4->P6->P1)
+    println("\n--- Scenario 4: Payment Failed ---")
+    val s4 = simulateSequence(net, m0, List(
+      "T1_PlaceOrder",
+      "T2_Inv_Enough_Reduce_Success",
+      "T6_Submit_Payment",
+      "T8_Payment_Failed",
+      "T10_Fail_Recovery"
     ))
-    printTrace(payTimeout, net)
+    printTrace(s4, net)
 
-    // Scenario 6: Random simulation
-    println("\n--- Scenario 6: Random Simulation (20 steps) ---")
-    val randomSim = simulate(net, OrderSystemPetriNet.initialMarking(), maxSteps = 20, seed = 42)
-    printTrace(randomSim, net)
+    // Scenario 5: Inventory Timeout (P1->P2->P6->P1)
+    println("\n--- Scenario 5: Inventory Check Timeout ---")
+    val s5 = simulateSequence(net, m0, List(
+      "T1_PlaceOrder",
+      "T5_Check_Inv_Timeout",
+      "T10_Fail_Recovery"
+    ))
+    printTrace(s5, net)
+
+    // Scenario 6: Payment Timeout (P1->P2->P3->P4->P6->P1)
+    println("\n--- Scenario 6: Payment Timeout ---")
+    val s6 = simulateSequence(net, m0, List(
+      "T1_PlaceOrder",
+      "T2_Inv_Enough_Reduce_Success",
+      "T6_Submit_Payment",
+      "T9_Payment_Timeout",
+      "T10_Fail_Recovery"
+    ))
+    printTrace(s6, net)
+
+    // Scenario 7: Random simulation (20 steps)
+    println("\n--- Scenario 7: Random Simulation (20 steps) ---")
+    val s7 = simulate(net, m0, maxSteps = 20, seed = 42)
+    printTrace(s7, net)
   }
-
-  private def formatNonZero(m: Marking): String =
-    m.filter(_._2 > 0).toList.sortBy(_._1.id).map { case (p, n) =>
-      s"  ${p.id} = $n"
-    }.mkString("\n")
 }

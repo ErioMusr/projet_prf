@@ -2,8 +2,7 @@ package petrinet
 
 /**
  * Main entry point for Petri net verification and analysis.
- * Runs state space exploration, property analysis, LTL model checking,
- * scenario simulation, and comparative analysis with the Akka system.
+ * Matches the diagram: 6 Places (P1-P6), 10 Transitions.
  */
 object VerificationMain {
 
@@ -13,20 +12,19 @@ object VerificationMain {
     println("Order Management System - Formal Analysis")
     println("=" * 60)
 
-    // Step 1: Build the Petri net
+    // Step 1: Build the Petri net (matching scala.png diagram)
     println("\n[1/5] Building Petri net model...")
     val net = OrderSystemPetriNet.build()
-    val initial = OrderSystemPetriNet.initialMarking(inventoryStock = 5)
-    println(s"  Places: ${net.places.size}")
-    println(s"  Transitions: ${net.transitions.size}")
+    val m0 = OrderSystemPetriNet.initialMarking()
+    println(s"  Places: ${net.places.size} (P1-P6)")
+    println(s"  Transitions: ${net.transitions.size} (T1-T10)")
     println(s"  Input arcs: ${net.inputArcs.size}")
     println(s"  Output arcs: ${net.outputArcs.size}")
-    println(s"\n  Initial marking:")
-    println(net.printMarking(initial))
+    println(s"  Initial marking: ${OrderSystemPetriNet.markingVector(m0)}")
 
     // Step 2: Explore state space
-    println("\n[2/5] Exploring state space...")
-    val graph = StateSpaceExplorer.explore(net, initial)
+    println("\n[2/5] Exploring state space (BFS)...")
+    val graph = StateSpaceExplorer.explore(net, m0)
     StateSpaceExplorer.printSummary(graph, net)
 
     // Step 3: Structural property analysis
@@ -41,9 +39,9 @@ object VerificationMain {
     println("\n[5/5] Running scenario simulations...")
     PetriNetSimulator.runOrderSystemScenarios(net)
 
-    // Step 6: Comparative analysis (if log.txt exists)
+    // Step 6: Comparative analysis
     println("\n[BONUS] Comparative simulation with Akka traces...")
-    SimulationComparator.runComparison(net, initial, "log.txt")
+    SimulationComparator.runComparison(net, m0, "log.txt")
 
     println("\n" + "=" * 60)
     println("VERIFICATION COMPLETE")
