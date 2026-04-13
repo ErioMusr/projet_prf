@@ -1,4 +1,5 @@
 import akka.actor.typed.ActorSystem
+import akka.actor.typed.SupervisorStrategy
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.AskPattern._
 import akka.util.Timeout
@@ -21,9 +22,18 @@ object Main {
 
     try {
       println("[INFO] Creating actors...")
-      inventoryActor = system.systemActorOf(InventoryActor(), "InventoryActor")
-      paymentActor = system.systemActorOf(PaymentActor(), "PaymentActor")
-      orderActor = system.systemActorOf(OrderActor(inventoryActor, paymentActor), "OrderActor")
+      inventoryActor = system.systemActorOf(
+        Behaviors.supervise(InventoryActor()).onFailure(SupervisorStrategy.restart),
+        "InventoryActor"
+      )
+      paymentActor = system.systemActorOf(
+        Behaviors.supervise(PaymentActor()).onFailure(SupervisorStrategy.restart),
+        "PaymentActor"
+      )
+      orderActor = system.systemActorOf(
+        Behaviors.supervise(OrderActor(inventoryActor, paymentActor)).onFailure(SupervisorStrategy.restart),
+        "OrderActor"
+      )
 
       println("[SUCCESS] All actors initialized\n")
 
@@ -37,6 +47,7 @@ object Main {
 
       val shutdownFuture = orderActor.ask(ref => CancelAllUnpaidOrders(ref))
       Await.result(shutdownFuture, 5.seconds)
+      Thread.sleep(1000)
 
       println("[SUCCESS] All unpaid orders cancelled and inventory released.")
 

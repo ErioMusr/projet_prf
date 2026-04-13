@@ -9,7 +9,7 @@ object FileStore {
   val logPath = Paths.get("log.txt")
 
   // ===== Logging =====
-  def logEvent(event: String): Unit = {
+  def logEvent(event: String): Unit = this.synchronized {
     val line = s"${System.currentTimeMillis()}|$event"
     Files.write(logPath, List(line).asJava, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
   }
