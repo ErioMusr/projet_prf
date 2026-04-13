@@ -2,7 +2,7 @@ package petrinet
 
 /**
  * Main entry point for Petri net verification and analysis.
- * Matches the diagram: 6 Places (P1-P6), 10 Transitions.
+ * Matches the diagram: 6 Places (P1-P6), 9 Transitions.
  */
 object VerificationMain {
 
@@ -17,7 +17,7 @@ object VerificationMain {
     val net = OrderSystemPetriNet.build()
     val m0 = OrderSystemPetriNet.initialMarking()
     println(s"  Places: ${net.places.size} (P1-P6)")
-    println(s"  Transitions: ${net.transitions.size} (T1-T10)")
+    println(s"  Transitions: ${net.transitions.size} (T1-T9)")
     println(s"  Input arcs: ${net.inputArcs.size}")
     println(s"  Output arcs: ${net.outputArcs.size}")
     println(s"  Initial marking: ${OrderSystemPetriNet.markingVector(m0)}")

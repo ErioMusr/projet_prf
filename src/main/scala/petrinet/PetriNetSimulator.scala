@@ -89,58 +89,52 @@ object PetriNetSimulator {
     println("\n--- Scenario 1: Happy Path (P1->P2->P3->P4->P5) ---")
     val s1 = simulateSequence(net, m0, List(
       "T1_PlaceOrder",
-      "T2_Inv_Enough_Reduce_Success",
-      "T6_Submit_Payment",
-      "T7_Payment_Success"
+      "T5_Inv_Success",
+      "T7_Submit_Pay",
+      "T9_Pay_Success"
     ))
     printTrace(s1, net)
 
-    // Scenario 2: Inventory Not Found (P1->P2->P6->P1)
+    // Scenario 2: Inventory Not Found (P1->P2->P6)
     println("\n--- Scenario 2: Inventory Not Found ---")
     val s2 = simulateSequence(net, m0, List(
       "T1_PlaceOrder",
-      "T3_Inv_NotFound",
-      "T10_Fail_Recovery"
+      "T2_Inv_NotFound"
     ))
     printTrace(s2, net)
 
-    // Scenario 3: Inventory Insufficient (P1->P2->P6->P1)
+    // Scenario 3: Inventory Insufficient (P1->P2->P6)
     println("\n--- Scenario 3: Inventory Insufficient ---")
     val s3 = simulateSequence(net, m0, List(
       "T1_PlaceOrder",
-      "T4_Inv_Insufficient",
-      "T10_Fail_Recovery"
+      "T4_Inv_Insufficient"
     ))
     printTrace(s3, net)
 
-    // Scenario 4: Payment Failed (P1->P2->P3->P4->P6->P1)
+    // Scenario 4: Payment Failed (P1->P2->P3->P4->P6)
     println("\n--- Scenario 4: Payment Failed ---")
     val s4 = simulateSequence(net, m0, List(
       "T1_PlaceOrder",
-      "T2_Inv_Enough_Reduce_Success",
-      "T6_Submit_Payment",
-      "T8_Payment_Failed",
-      "T10_Fail_Recovery"
+      "T5_Inv_Success",
+      "T7_Submit_Pay",
+      "T8_Pay_Failed"
     ))
     printTrace(s4, net)
 
-    // Scenario 5: Inventory Timeout (P1->P2->P6->P1)
+    // Scenario 5: Inventory Timeout (P1->P2->P6)
     println("\n--- Scenario 5: Inventory Check Timeout ---")
     val s5 = simulateSequence(net, m0, List(
       "T1_PlaceOrder",
-      "T5_Check_Inv_Timeout",
-      "T10_Fail_Recovery"
+      "T3_Check_Timeout"
     ))
     printTrace(s5, net)
 
-    // Scenario 6: Payment Timeout (P1->P2->P3->P4->P6->P1)
+    // Scenario 6: Payment Timeout (P1->P2->P3->P6)
     println("\n--- Scenario 6: Payment Timeout ---")
     val s6 = simulateSequence(net, m0, List(
       "T1_PlaceOrder",
-      "T2_Inv_Enough_Reduce_Success",
-      "T6_Submit_Payment",
-      "T9_Payment_Timeout",
-      "T10_Fail_Recovery"
+      "T5_Inv_Success",
+      "T6_Pay_Timeout"
     ))
     printTrace(s6, net)
 

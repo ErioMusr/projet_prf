@@ -7,9 +7,9 @@ class PetriNetTest extends AnyFlatSpec with Matchers {
   val net = OrderSystemPetriNet.build()
   val m0 = OrderSystemPetriNet.initialMarking()
 
-  "PetriNet" should "have 6 places and 10 transitions matching the diagram" in {
+  "PetriNet" should "have 6 places and 9 transitions matching the diagram" in {
     net.places.size shouldBe 6
-    net.transitions.size shouldBe 10
+    net.transitions.size shouldBe 9
   }
 
   it should "only enable T1_PlaceOrder in initial marking M(1,0,0,0,0,0)" in {
@@ -26,7 +26,7 @@ class PetriNetTest extends AnyFlatSpec with Matchers {
   }
 
   it should "not fire a disabled transition" in {
-    net.fire(net.transitions.find(_.id == "T7_Payment_Success").get, m0) shouldBe None
+    net.fire(net.transitions.find(_.id == "T9_Pay_Success").get, m0) shouldBe None
   }
 
   "StateSpaceExplorer" should "find exactly 6 reachable states for M(1,0,0,0,0,0)" in {
@@ -69,23 +69,46 @@ class PetriNetTest extends AnyFlatSpec with Matchers {
   "PetriNetSimulator" should "complete happy path P1->P2->P3->P4->P5" in {
     val trace = PetriNetSimulator.simulateSequence(net, m0, List(
       "T1_PlaceOrder",
-      "T2_Inv_Enough_Reduce_Success",
-      "T6_Submit_Payment",
-      "T7_Payment_Success"
+      "T5_Inv_Success",
+      "T7_Submit_Pay",
+      "T9_Pay_Success"
     ))
     trace.steps.size shouldBe 4
     trace.finalMarking(OrderSystemPetriNet.P5) shouldBe 1
     OrderSystemPetriNet.markingVector(trace.finalMarking) shouldBe "M(0,0,0,0,1,0)"
   }
 
-  it should "complete failure+recovery cycle P1->P2->P6->P1" in {
+  it should "complete failure path P1->P2->P6" in {
     val trace = PetriNetSimulator.simulateSequence(net, m0, List(
       "T1_PlaceOrder",
-      "T3_Inv_NotFound",
-      "T10_Fail_Recovery"
+      "T2_Inv_NotFound"
     ))
-    trace.steps.size shouldBe 3
-    trace.finalMarking(OrderSystemPetriNet.P1) shouldBe 1
-    OrderSystemPetriNet.markingVector(trace.finalMarking) shouldBe "M(1,0,0,0,0,0)"
+    trace.steps.size shouldBe 2
+    trace.finalMarking(OrderSystemPetriNet.P6) shouldBe 1
+    OrderSystemPetriNet.markingVector(trace.finalMarking) shouldBe "M(0,0,0,0,0,1)"
+  }
+
+  "SimulationComparator" should "group events by order and validate independently" in {
+    val events = List(
+      SimulationComparator.AkkaEvent(1000L, "PlaceOrder", List("product-1", "1")),
+      SimulationComparator.AkkaEvent(1001L, "Check_Inv_Start", List("order-1", "product-1", "1")),
+      SimulationComparator.AkkaEvent(1002L, "Inv_Enough_Reduce_Success", List("order-1", "product-1", "1", "9")),
+      SimulationComparator.AkkaEvent(1003L, "Submit_Payment", List("order-1", "product-1", "10.0", "10.0")),
+      SimulationComparator.AkkaEvent(1004L, "Payment_Success", List("order-1", "product-1", "10.0")),
+      SimulationComparator.AkkaEvent(2000L, "PlaceOrder", List("product-2", "2")),
+      SimulationComparator.AkkaEvent(2001L, "Check_Inv_Start", List("order-2", "product-2", "2")),
+      SimulationComparator.AkkaEvent(2002L, "Inv_NotFound", List("order-2", "product-2"))
+    )
+
+    val grouped = SimulationComparator.groupByOrder(events)
+    grouped.keySet shouldBe Set("order-1", "order-2")
+    grouped("order-1").head.eventType shouldBe "PlaceOrder"
+    grouped("order-2").head.eventType shouldBe "PlaceOrder"
+
+    val result = SimulationComparator.validateTraceByOrder(net, m0, events)
+    result.groupedOrders shouldBe 2
+    result.summary.invalidTransitions shouldBe 0
+    result.summary.validTransitions shouldBe 6
+    result.summary.skippedMappedEvents shouldBe 0
   }
 }
